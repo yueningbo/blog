@@ -27,6 +27,29 @@
     syncLabel();
   }
 
+
+  /* ---------- 首页筛选 ---------- */
+  var chips = Array.prototype.slice.call(document.querySelectorAll('.chip[data-filter]'));
+  var cards = Array.prototype.slice.call(document.querySelectorAll('#post-list .card'));
+  var emptyHint = document.getElementById('empty-hint');
+
+  if (chips.length && cards.length) {
+    chips.forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        var filter = chip.getAttribute('data-filter');
+        var shown = 0;
+        chips.forEach(function (c) { c.classList.toggle('is-active', c === chip); });
+        cards.forEach(function (card) {
+          var kind = card.getAttribute('data-kind') || 'translation';
+          var show = filter === 'all' || kind === filter;
+          card.classList.toggle('is-hidden', !show);
+          if (show) shown++;
+        });
+        if (emptyHint) emptyHint.hidden = shown > 0;
+      });
+    });
+  }
+
   /* ---------- 目录（从 h2 生成） ---------- */
   var article = document.querySelector('article');
   var sidebar = document.getElementById('toc-list');

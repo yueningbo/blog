@@ -392,3 +392,33 @@ a{color:#000;text-decoration:underline}
 /* 页脚吸底 */
 body{display:flex;flex-direction:column;min-height:100vh}
 .wrap,.layout{flex:1 0 auto;width:100%}
+
+/* ===================== 内容类型 / 筛选 ===================== */
+
+.kind{
+  display:inline-flex;align-items:center;padding:.05rem .45rem;border-radius:999px;
+  font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;line-height:1.7;
+  border:1px solid var(--line-strong);color:var(--muted);white-space:nowrap;
+}
+.kind--original{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+
+.list-head{display:flex;flex-wrap:wrap;gap:.9rem 1.2rem;align-items:center;margin-bottom:1.2rem}
+.list-head .section-label{flex:1 1 12rem;margin:0}
+.list-head .section-label::after{display:none}
+.filters{display:flex;flex-wrap:wrap;gap:.4rem}
+.chip{
+  font-family:var(--sans);font-size:.78rem;line-height:1.6;padding:.2rem .7rem;border-radius:999px;
+  border:1px solid var(--line-strong);background:transparent;color:var(--muted);cursor:pointer;
+  transition:color .15s,border-color .15s,background .15s;
+}
+.chip:hover{color:var(--fg);border-color:var(--fg-soft)}
+.chip.is-active{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+.empty{margin:2rem 0;color:var(--muted);font-size:.92rem}
+.card.is-hidden{display:none}
+
+/* 关于页 */
+.about{max-width:44rem}
+.about-links{display:flex;flex-wrap:wrap;gap:1.2rem;margin:0 0 2rem}
+.about-links a{font-family:var(--mono);font-size:.8rem;letter-spacing:.04em}
+.about .colophon-note{color:var(--muted);font-size:.9rem}
+.about .intro strong{color:var(--fg)}

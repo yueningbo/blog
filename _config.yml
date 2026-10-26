@@ -1,13 +1,13 @@
-title: Claude 中文阅读库
-tagline: Claude 官方博客 · 中文精读
+title: 阅读与写作
+tagline: 收录与原创
 description: >-
-  把 Claude 官方博客里值得反复读的文章译成中文，按原文排版重排：图表、表格、代码块和链接都保留，深浅色都能读。
+  一个个人博客：收录值得反复读的文章（按原文排版重排、标明出处），也写自己的东西。
 lang: zh-CN
 author: yueningbo
-github_url: https://github.com/yueningbo/claude-zh-blog
+github_url: https://github.com/yueningbo/blog
 
 url: https://yueningbo.github.io
-baseurl: /claude-zh-blog
+baseurl: /blog
 
 permalink: /posts/:title.html
 

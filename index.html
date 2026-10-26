@@ -4,26 +4,38 @@ hide_progress: true
 ---
 <main class="wrap">
 
-  <p class="kicker">Reading library</p>
-  <h1>Claude 官方博客 · 中文精读</h1>
+  <p class="kicker">{{ site.tagline }}</p>
+  <h1>{{ site.title }}</h1>
   <div class="intro">
-    <p>把值得反复看的文章译成中文，按原文排版重排：图表、表格、代码块和链接都保留，深浅色都能读。</p>
-    <p>每篇都标明出处并附原文链接；译文非官方，仅供阅读参考。</p>
+    <p>收录值得反复读的文章，也写自己的东西。</p>
+    <p>收录的会按原文排版重排、标注出处与原作者；原创的放在这里，想到什么写什么。</p>
   </div>
 
-  <p class="section-label">全部文章 <span>· {{ site.posts | size }}</span></p>
+  {% assign total = site.posts | size %}
+  {% assign originals = site.posts | where: "kind", "original" | size %}
+  {% assign collected = total | minus: originals %}
 
-  <section class="cards">
+  <div class="list-head">
+    <p class="section-label">全部文章 <span>· {{ total }}</span></p>
+    <div class="filters" role="group" aria-label="筛选">
+      <button class="chip is-active" data-filter="all" type="button">全部 {{ total }}</button>
+      <button class="chip" data-filter="original" type="button">原创 {{ originals }}</button>
+      <button class="chip" data-filter="translation" type="button">收录 {{ collected }}</button>
+    </div>
+  </div>
+
+  <section class="cards" id="post-list">
     {% for post in site.posts %}
-    <a class="card" href="{{ post.url | relative_url }}">
+    {% assign kind = post.kind | default: "translation" %}
+    <a class="card" href="{{ post.url | relative_url }}" data-kind="{{ kind }}">
       <p class="card-meta">
-        <span>{{ post.date | date: "%Y-%m-%d" }}</span>
+        <span class="kind kind--{{ kind }}">{% if kind == "original" %}原创{% else %}收录{% endif %}</span>
         <span class="sep"></span>
-        <span>{% if post.category %}{{ post.category }}{% else %}未分类{% endif %}</span>
+        <span>{{ post.date | date: "%Y-%m-%d" }}</span>
+        {% if post.category %}<span class="sep"></span><span>{{ post.category }}</span>{% endif %}
         <span class="sep"></span>
         <span>{{ post.read_time }} 分钟</span>
-        <span class="sep"></span>
-        <span>{{ post.source_name | default: "claude.dev" }}</span>
+        {% if kind != "original" %}<span class="sep"></span><span>{{ post.source_name | default: "外站" }}</span>{% endif %}
       </p>
       <h2>{{ post.title }}</h2>
       <p class="desc">{{ post.summary }}</p>
@@ -34,5 +46,7 @@ hide_progress: true
     </a>
     {% endfor %}
   </section>
+
+  <p class="empty" id="empty-hint" hidden>这个分类下还没有文章。</p>
 
 </main>

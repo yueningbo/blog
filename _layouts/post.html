@@ -1,12 +1,13 @@
 ---
 layout: default
 ---
+{% assign kind = page.kind | default: "translation" %}
 <div class="layout">
 
   <aside class="toc" aria-label="目录">
     <h2>目录</h2>
     <ol id="toc-list"></ol>
-    <a class="back" href="{{ '/index.html' | relative_url }}">← 返回书架</a>
+    <a class="back" href="{{ '/index.html' | relative_url }}">← 返回列表</a>
   </aside>
 
   <article>
@@ -15,7 +16,9 @@ layout: default
     <h1>{{ page.title }}</h1>
 
     <div class="meta">
-      {% if page.authors %}<span><strong>{{ page.authors }}</strong></span><span class="sep"></span>{% endif %}
+      <span class="kind kind--{{ kind }}">{% if kind == "original" %}原创{% else %}收录{% endif %}</span>
+      {% if page.authors %}<span class="sep"></span><span><strong>{{ page.authors }}</strong></span>{% endif %}
+      <span class="sep"></span>
       <time datetime="{{ page.date | date_to_xmlschema }}">{{ page.date | date: "%Y 年 %-m 月 %-d 日" }}</time>
       {% if page.read_time %}<span class="sep"></span><span>{{ page.read_time }} 分钟阅读</span>{% endif %}
     </div>
@@ -31,7 +34,13 @@ layout: default
       {% if page.source %}
       <p class="source">原文：<a href="{{ page.source }}" rel="nofollow noopener">{{ page.source }}</a></p>
       {% endif %}
-      <p class="colophon">本文为中文译本，版权归原作者与 Anthropic 所有；如有疑义请联系撤下。</p>
+      <p class="colophon">
+        {% if kind == "original" %}
+        本文为原创，转载请注明出处。
+        {% else %}
+        本文为中文译本，版权归原作者所有；如有疑义请联系撤下。
+        {% endif %}
+      </p>
 
       {% if page.previous or page.next %}
       <nav class="post-nav" aria-label="上下篇">
