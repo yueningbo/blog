@@ -1,0 +1,35 @@
+title: Claude 中文阅读库
+tagline: Claude 官方博客 · 中文精读
+description: >-
+  把 Claude 官方博客里值得反复读的文章译成中文，按原文排版重排：图表、表格、代码块和链接都保留，深浅色都能读。
+lang: zh-CN
+author: yueningbo
+github_url: https://github.com/yueningbo/claude-zh-blog
+
+url: https://yueningbo.github.io
+baseurl: /claude-zh-blog
+
+permalink: /posts/:title.html
+
+markdown: kramdown
+highlighter: rouge
+
+plugins:
+  - jekyll-feed
+  - jekyll-sitemap
+
+feed:
+  path: feed.xml
+  posts_limit: 30
+
+defaults:
+  - scope:
+      path: ""
+      type: posts
+    values:
+      layout: post
+
+exclude:
+  - README.md
+  - vendor
+  - .bundle

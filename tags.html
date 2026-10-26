@@ -1,0 +1,31 @@
+---
+layout: default
+title: 标签
+hide_progress: true
+---
+<main class="wrap">
+  <p class="kicker">Tags</p>
+  <h1>标签</h1>
+  <p class="intro">按主题翻，或者直接看 <a href="{{ '/index.html' | relative_url }}">全部文章</a>。</p>
+
+  {% assign tags = site.tags | sort %}
+  <div class="tag-cloud" aria-label="全部标签">
+    {% for tag in tags %}
+    <a href="#tag-{{ forloop.index }}">{{ tag[0] }}<span>{{ tag[1] | size }}</span></a>
+    {% endfor %}
+  </div>
+
+  {% for tag in tags %}
+  <section class="tag-section" id="tag-{{ forloop.index }}">
+    <h2>{{ tag[0] }}</h2>
+    <ul class="post-list">
+      {% for post in tag[1] %}
+      <li>
+        <time datetime="{{ post.date | date_to_xmlschema }}">{{ post.date | date: "%Y-%m-%d" }}</time>
+        <a href="{{ post.url | relative_url }}">{{ post.title }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</main>
