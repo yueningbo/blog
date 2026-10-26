@@ -422,3 +422,41 @@ body{display:flex;flex-direction:column;min-height:100vh}
 .about-links a{font-family:var(--mono);font-size:.8rem;letter-spacing:.04em}
 .about .colophon-note{color:var(--muted);font-size:.9rem}
 .about .intro strong{color:var(--fg)}
+
+/* ===================== 代码块 / 提示框 ===================== */
+
+pre{
+  margin:1.5rem 0;padding:1rem 1.15rem;overflow-x:auto;
+  background:var(--code-bg);border:1px solid var(--line);border-radius:10px;
+  font-family:var(--mono);font-size:.82rem;line-height:1.8;color:var(--fg-soft);
+  -webkit-overflow-scrolling:touch;
+}
+pre code{
+  background:none;border:0;padding:0;white-space:pre;
+  font-size:inherit;color:inherit;
+}
+pre .tag{
+  display:block;margin:-.2rem 0 .55rem;padding:0;border:0;
+  font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+}
+
+.callout{
+  margin:1.5rem 0;padding:.85rem 1.15rem;
+  border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:8px;background:color-mix(in srgb,var(--accent) 5%,transparent);
+  font-size:.96rem;color:var(--fg-soft);
+}
+.callout p{margin:0}
+.callout p + p{margin-top:.6rem}
+.callout .label{
+  display:block;margin-bottom:.2rem;
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);
+}
+
+/* 宽表：不锁首列宽度 */
+.table-wrap--wide th:first-child,
+.table-wrap--wide td:first-child{white-space:normal;width:auto;font-weight:650}
+.table-wrap--wide th:nth-child(2){width:auto}
+.table-wrap--wide th:first-child:nth-last-child(3){width:22%}
+.table-wrap--wide th:nth-child(2):nth-last-child(2){width:30%}
+.table-wrap--wide td{font-size:.86rem}
