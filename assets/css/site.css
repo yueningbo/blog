@@ -460,3 +460,7 @@ pre .tag{
 .table-wrap--wide th:first-child:nth-last-child(3){width:22%}
 .table-wrap--wide th:nth-child(2):nth-last-child(2){width:30%}
 .table-wrap--wide td{font-size:.86rem}
+
+/* 图内文字与弱化标注 */
+.art .fig-svg text{font-family:var(--sans)}
+.dim{color:var(--muted);font-size:.9em}

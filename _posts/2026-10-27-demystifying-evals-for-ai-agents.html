@@ -1,0 +1,674 @@
+---
+layout: post
+kind: translation
+title: "拆解 AI agent 的评估"
+date: 2026-10-27 09:00:00 +0800
+category: 工程
+category_en: Research
+authors: Mikaela Grace、Jeremy Hadfield、Rodrigo Olivares、Jiri De Jonghe
+read_time: 17
+source: https://www.anthropic.com/research/demystifying-evals-for-ai-agents
+source_name: anthropic.com
+summary: 没有评估，团队只能在生产环境里打地鼠；有了评估，失败会变成用例，用例会挡住回归。一篇把 eval 的构成、类型、评分器与落地路线图讲透的长文。
+tags:
+  - AI 评估
+  - Agent
+  - 工程实践
+---
+
+<div class="lede">
+  <p>好的评估能让团队更有底气地把 AI agent 发出去。没有评估，团队很容易陷进反应式的循环：问题只在生产环境里暴露，修好一个又冒出一个。评估让问题和行为变化在影响用户之前就可见，而且它的价值会在 agent 的整个生命周期里不断累积。</p>
+  <p>正如我们在《Building effective agents》里说过的，agent 会跨很多轮工作：调用工具、改动状态、根据中间结果调整策略。让 AI agent 变得有用的那些特性——自主性、智能、灵活性——同时也让它更难被评估。</p>
+  <p>通过内部实践，以及和处在 agent 开发前沿的客户合作，我们摸出了一些更严谨、也更有用的评估设计方法。下面这些做法，在多种 agent 架构和真实部署场景里都验证过。</p>
+</div>
+
+<h2 id="structure">一次评估由什么构成</h2>
+
+<p><strong>评估</strong>（eval）就是给 AI 系统做的一次测试：给它一个输入，然后用评分逻辑给输出打分，衡量是否成功。本文讨论的是<strong>自动化评估</strong>——不需要真实用户，在开发过程中就能跑。</p>
+
+<p><strong>单轮评估</strong>很直白：一个提示词、一个回答、一套评分逻辑。早期的 LLM 主要用单轮、非 agent 的评估。随着能力提升，<strong>多轮评估</strong>变得越来越常见。</p>
+
+<figure class="art">
+  <div class="fig-head">
+    <div class="fig-title">单轮 vs Agent 评估</div>
+  </div>
+  <div class="fig-draw">
+    <svg class="fig-svg" viewBox="0 0 651 340" width="651" height="340" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+  <!-- ===== 单轮 ===== -->
+  <text x="2" y="78" font-size="12" font-weight="600" fill="var(--ink-3)">单轮</text>
+
+  <rect x="58" y="20" width="150" height="52" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="70" y="40" font-size="12" font-weight="600" fill="var(--ink)">提示</text>
+  <text x="70" y="58" font-size="11" fill="var(--ink-2)">一只 {ANIMAL} 有几只脚？</text>
+
+  <rect x="58" y="82" width="150" height="44" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="70" y="102" font-size="12" font-weight="600" fill="var(--ink)">数据</text>
+  <text x="70" y="119" font-size="11" fill="var(--ink-2)">ANIMAL = 猫</text>
+
+  <path d="M208 46 L228 46 L228 104 L208 104" fill="none" stroke-width="1" stroke-linejoin="round" style="stroke:var(--ink-3)"/>
+  <path d="M228 75 L246 75" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M242 71 L246 75 L242 79" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+
+  <rect x="250" y="28" width="100" height="94" rx="8" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="300" y="82" font-size="13" font-weight="600" text-anchor="middle" fill="var(--ink)">LLM</text>
+
+  <path d="M350 75 L384 75" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M380 71 L384 75 L380 79" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <rect x="386" y="53" width="72" height="44" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="422" y="80" font-size="12" text-anchor="middle" fill="var(--ink-2)">回答</text>
+
+  <path d="M458 75 L482 75" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M478 71 L482 75 L478 79" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <rect x="484" y="45" width="162" height="60" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="496" y="68" font-size="12" font-weight="600" fill="var(--ink)">评分逻辑</text>
+  <text x="496" y="88" font-size="11" fill="var(--ink-2)">response == 18</text>
+
+  <path d="M2 148 L649 148" fill="none" stroke-width="1" style="stroke:var(--line-soft)"/>
+
+  <!-- ===== Agent ===== -->
+  <text x="2" y="250" font-size="12" font-weight="600" fill="var(--ink-3)">Agent</text>
+
+  <rect x="58" y="164" width="150" height="44" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="70" y="184" font-size="12" font-weight="600" fill="var(--ink)">工具</text>
+  <text x="70" y="200" font-size="10.5" fill="var(--ink-2)">web_search() · file_edit()</text>
+
+  <rect x="58" y="214" width="150" height="44" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="70" y="234" font-size="12" font-weight="600" fill="var(--ink)">环境</text>
+  <text x="70" y="250" font-size="10.5" fill="var(--ink-2)">装了 python · 沙箱上网</text>
+
+  <rect x="58" y="264" width="150" height="44" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="70" y="284" font-size="12" font-weight="600" fill="var(--ink)">任务</text>
+  <text x="70" y="300" font-size="10.5" fill="var(--ink-2)">写个 MCP server</text>
+
+  <path d="M208 186 L238 186 L238 266 L208 266" fill="none" stroke-width="1" stroke-linejoin="round" style="stroke:var(--ink-3)"/>
+  <path d="M238 236 L256 236" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M252 232 L256 236 L252 240" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+
+  <rect x="260" y="170" width="150" height="140" rx="8" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="272" y="190" font-size="13" font-weight="600" fill="var(--ink)">Agent</text>
+  <text x="272" y="210" font-size="10.5" fill="var(--ink-2)">read_file('file.py')</text>
+  <text x="272" y="226" font-size="10.5" fill="var(--ink-2)">web_search(MCP 文档)</text>
+  <text x="272" y="242" font-size="10.5" fill="var(--ink-2)">edit_file('file2.py')</text>
+  <text x="272" y="258" font-size="10.5" fill="var(--ink-3)">…</text>
+  <text x="272" y="274" font-size="10.5" fill="var(--ink-2)">bash(pytest)</text>
+  <rect x="272" y="284" width="70" height="18" rx="4" fill="var(--fig-focal)" opacity=".18"/>
+  <text x="280" y="297" font-size="10.5" fill="var(--ink)">我做完了！</text>
+
+  <path d="M410 236 L434 236" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M430 232 L434 236 L430 240" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <rect x="436" y="196" width="210" height="80" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="448" y="219" font-size="12" font-weight="600" fill="var(--ink)">评分逻辑</text>
+  <text x="448" y="239" font-size="11" fill="var(--ink-2)">跑一堆测试，确认 MCP server</text>
+  <text x="448" y="256" font-size="11" fill="var(--ink-2)">真的能用</text>
+
+  <path d="M260 300 L244 300 L244 258 L212 258" fill="none" stroke-width="1" stroke-linejoin="round" stroke-dasharray="4 3" style="stroke:var(--ink-3)"/>
+  <path d="M216 254 L212 258 L216 262" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <text x="176" y="328" font-size="10.5" fill="var(--ink-3)">环境更新</text>
+</svg>
+  </div>
+  <figcaption><b>图</b>单轮评估只有一问一答；agent 评估要跨多轮调用工具、改动环境，最后用测试验证结果。</figcaption>
+</figure>
+
+<p><strong>Agent 评估</strong>还要更复杂。agent 会跨多轮使用工具，一边改环境状态一边调整策略——这意味着错误会传播、会叠加。前沿模型还能找到超出静态评估想象的解法。比如 Opus 4.5 在做 𝜏2-bench 的一道订票题时，发现了政策里的一个漏洞：按题面它算「失败」了，但实际上它给出了对用户更好的方案。</p>
+
+<p>构建 agent 评估时，我们用下面这套定义：</p>
+
+<ul>
+  <li><strong>任务</strong>（task，也叫 problem 或 test case）：一次测试，有明确的输入和成功标准。</li>
+  <li><strong>试验</strong>（trial）：对同一个任务的一次尝试。模型的输出每次都不一样，所以我们会跑多次，得到更稳定的结果。</li>
+  <li><strong>评分器</strong>（grader）：给 agent 某一维度表现打分的逻辑。一个任务可以挂多个评分器，每个评分器里又可以有多条断言（有时叫 checks）。</li>
+  <li><strong>轨迹</strong>（transcript，也叫 trace 或 trajectory）：一次试验的完整记录，包括输出、工具调用、推理过程、中间结果以及其他所有交互。对 Anthropic API 来说，就是评估结束时完整的 messages 数组。</li>
+  <li><strong>结果</strong>（outcome）：试验结束时环境的最终状态。订票 agent 可能在轨迹末尾说「您的航班已订好」，但真正的结果是环境数据库里到底有没有这条预订记录。</li>
+  <li><strong>评估脚手架</strong>（evaluation harness）：把评估从头跑到尾的基础设施。它提供指令和工具、并发跑任务、记录每一步、给输出打分并汇总结果。</li>
+  <li><strong>agent 脚手架</strong>（agent harness，也叫 scaffold）：让模型能以 agent 方式运转的系统——处理输入、编排工具调用、返回结果。我们评估「一个 agent」时，评估的是脚手架<em>和</em>模型一起工作的效果。</li>
+  <li><strong>评估套件</strong>（evaluation suite）：为衡量特定能力或行为而设计的一组任务。同一个套件里的任务通常共享一个大致目标，比如客服套件里会有退款、取消、升级等任务。</li>
+</ul>
+
+<figure class="art">
+  <div class="fig-head">
+    <div class="fig-title">评估的组成部分</div>
+  </div>
+  <div class="fig-draw">
+    <svg class="fig-svg" viewBox="0 0 651 344" width="651" height="344" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+  <!-- 评估脚手架 -->
+  <rect x="2" y="20" width="498" height="252" rx="10" fill="none" stroke="var(--line)"/>
+  <text x="14" y="40" font-size="11" font-weight="600" fill="var(--ink-3)">评估脚手架</text>
+
+  <!-- 评估套件 -->
+  <rect x="14" y="50" width="474" height="208" rx="8" fill="var(--bg-raised)" stroke="var(--line-soft)"/>
+  <text x="26" y="70" font-size="11" font-weight="600" fill="var(--ink-3)">评估套件</text>
+
+  <!-- 一个任务 -->
+  <rect x="26" y="80" width="286" height="166" rx="8" fill="var(--bg-panel)" stroke="var(--fig-focal)" stroke-opacity=".5"/>
+  <text x="38" y="100" font-size="12" font-weight="600" fill="var(--ink)">任务：密码为空时的认证绕过</text>
+
+  <text x="38" y="122" font-size="10.5" fill="var(--ink-3)">评分器</text>
+  <rect x="38" y="128" width="112" height="20" rx="4" fill="none" stroke="var(--line-strong)"/>
+  <text x="46" y="142" font-size="10" fill="var(--ink-2)">deterministic_tests</text>
+  <rect x="156" y="128" width="74" height="20" rx="4" fill="none" stroke="var(--line-strong)"/>
+  <text x="164" y="142" font-size="10" fill="var(--ink-2)">state_check</text>
+
+  <rect x="38" y="154" width="78" height="20" rx="4" fill="none" stroke="var(--line-strong)"/>
+  <text x="46" y="168" font-size="10" fill="var(--ink-2)">llm_rubric</text>
+  <rect x="122" y="154" width="74" height="20" rx="4" fill="none" stroke="var(--line-strong)"/>
+  <text x="130" y="168" font-size="10" fill="var(--ink-2)">tool_calls</text>
+
+  <text x="38" y="196" font-size="10.5" fill="var(--ink-3)">跟踪指标</text>
+  <rect x="38" y="202" width="48" height="20" rx="4" fill="none" stroke="var(--line-strong)"/>
+  <text x="46" y="216" font-size="10" fill="var(--ink-2)">轮数</text>
+  <rect x="92" y="202" width="64" height="20" rx="4" fill="none" stroke="var(--line-strong)"/>
+  <text x="100" y="216" font-size="10" fill="var(--ink-2)">工具调用</text>
+  <rect x="162" y="202" width="54" height="20" rx="4" fill="none" stroke="var(--line-strong)"/>
+  <text x="170" y="216" font-size="10" fill="var(--ink-2)">token</text>
+  <rect x="222" y="202" width="44" height="20" rx="4" fill="none" stroke="var(--line-strong)"/>
+  <text x="230" y="216" font-size="10" fill="var(--ink-2)">延迟</text>
+
+  <text x="38" y="236" font-size="10" fill="var(--ink-3)">试验 ×N：每次试验留一条完整轨迹</text>
+
+  <!-- 其余任务 -->
+  <rect x="324" y="80" width="72" height="166" rx="8" fill="none" stroke="var(--line-soft)"/>
+  <text x="336" y="102" font-size="11" fill="var(--ink-3)">任务</text>
+  <text x="336" y="126" font-size="11" fill="var(--ink-3)">…</text>
+  <rect x="404" y="80" width="72" height="166" rx="8" fill="none" stroke="var(--line-soft)"/>
+  <text x="416" y="102" font-size="11" fill="var(--ink-3)">任务</text>
+
+  <!-- agent 脚手架 -->
+  <rect x="514" y="106" width="134" height="62" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="581" y="133" font-size="11.5" font-weight="600" text-anchor="middle" fill="var(--ink)">Agent 脚手架</text>
+  <text x="581" y="152" font-size="10" text-anchor="middle" fill="var(--ink-3)">模型 + 工具编排</text>
+  <path d="M500 137 L512 137" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M508 133 L512 137 L508 141" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <path d="M512 145 L500 145" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M504 141 L500 145 L504 149" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+
+  <!-- 结果 -> 打分 -->
+  <path d="M200 272 L200 286" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M196 282 L200 286 L204 282" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <rect x="130" y="288" width="150" height="46" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="142" y="307" font-size="12" font-weight="600" fill="var(--ink)">结果</text>
+  <text x="142" y="323" font-size="10.5" fill="var(--ink-2)">试验结束时的环境状态</text>
+
+  <path d="M280 311 L308 311" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M304 307 L308 311 L304 315" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <rect x="312" y="288" width="230" height="46" rx="8" fill="var(--bg-raised)" stroke="var(--line)"/>
+  <text x="324" y="307" font-size="12" font-weight="600" fill="var(--ink)">评分器打分</text>
+  <text x="324" y="323" font-size="10.5" fill="var(--ink-2)">轨迹 + 结果 → 分数</text>
+</svg>
+  </div>
+  <figcaption><b>图</b>脚手架跑套件，套件装任务，任务挂评分器和指标；每次执行留一条轨迹，最后对结果打分。</figcaption>
+</figure>
+
+<h2 id="why">为什么要建评估</h2>
+
+<p>团队刚开始做 agent 时，靠手动测试、自己吃自己的狗粮、加上直觉，往往能走得比想象中远。更严谨的评估看起来像是拖慢交付的额外开销。但过了原型阶段、agent 上了生产开始放量之后，没有评估的开发方式就开始崩了。</p>
+
+<p>崩溃点通常出现在这里：用户反馈「改完之后感觉变差了」，而团队完全在瞎飞——除了猜和试，没有任何验证手段。没有评估，调试就是反应式的：等投诉、手动复现、修掉、祈祷别的地方没被弄坏。团队分不清真正的回归和噪声，没法在发布前拿几百个场景自动验证改动，也量不出改进。</p>
+
+<p>这个过程我们见过很多次。Claude Code 起步时，靠 Anthropic 内部员工和外部用户的反馈快速迭代；后来才开始加评估——先是很窄的领域，比如简洁度、文件编辑，再到更复杂的行为，比如过度设计。这些评估帮忙定位问题、指导改进、聚焦研究与产品的协作。再加上生产监控、A/B 测试、用户研究，评估给了 Claude Code 在规模变大时继续改进的信号。</p>
+
+<p>在 agent 生命周期的任何阶段，写评估都有用。早期，评估逼着产品团队把「什么叫成功」说清楚；后期，它帮团队守住一致的质量线。</p>
+
+<p>Descript 的 agent 帮用户剪视频，他们围绕成功剪辑流程的三个维度建了评估：别弄坏东西、按我说的做、做好。评分方式从人工打分演进到 LLM 评分（判据由产品团队定义、定期用人工校准），现在他们常态化跑两套：一套做质量基准，一套做回归测试。Bolt 的 AI 团队起步更晚，那时他们的 agent 已经有大量用户；三个月里，他们搭出了一套评估系统：跑 agent、用静态分析给输出打分、用浏览器 agent 测应用、用 LLM 裁判评「是否遵循指令」这类行为。</p>
+
+<p>有的团队在开发之初就建评估，有的等到上规模、评估成了改进瓶颈时才补。评估在开发早期尤其有用：它把期望的行为显式写下来。两个工程师读同一份初始 spec，对「AI 该怎么处理边界情况」可能理解不同，一套评估用例就能消除这种歧义。无论什么时候建，评估都能加速开发。</p>
+
+<p>评估也决定你能多快换上新模型。更强的模型出来时，没有评估的团队要花几周测试，而有评估的对手几天内就能摸清新的强弱、调好提示词、完成升级。</p>
+
+<p>一旦有了评估，等于免费获得基线和回归测试：延迟、token 用量、单任务成本、错误率，都可以在一组固定任务上持续跟踪。评估还能成为产品团队和研究团队之间带宽最高的沟通渠道，定义出研究员可以优化的指标。评估的好处远不止盯回归——只是它的成本在前、收益在后，复利效应容易被忽略。</p>
+
+<h2 id="how">如何评估 AI agent</h2>
+
+<p>今天大规模部署的 agent 主要有几类：编码 agent、研究 agent、计算机操作 agent、对话 agent。类型之间行业差异很大，但评估技术可以通用。你不需要从零发明一套评估方法——下面几节讲的是各类 agent 上验证过的做法，可以直接当作地基，再扩展到你的领域。</p>
+
+<h3>agent 的评分器类型</h3>
+
+<p>agent 评估通常混合三种评分器：基于代码的、基于模型的、人工的。每种评分器评的是轨迹或结果的一部分。有效评估设计的关键之一，是为活选对评分器。</p>
+
+<div class="table-wrap table-wrap--wide">
+  <table>
+    <thead>
+      <tr><th>评分器</th><th>方法</th><th>优势</th><th>局限</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>基于代码</td>
+        <td>字符串匹配（精确、正则、模糊等）；二元测试（fail-to-pass、pass-to-pass）；静态分析（lint、类型、安全）；结果校验；工具调用校验（用了哪些工具、参数对不对）；轨迹分析（轮数、token 用量）</td>
+        <td>快；便宜；客观；可复现；容易调试；能验证特定条件</td>
+        <td>对「与预期不完全一致的合理变体」很脆；缺乏细微度；不太适合评估偏主观的任务</td>
+      </tr>
+      <tr>
+        <td>基于模型</td>
+        <td>按评分量表打分；自然语言断言；两两对比；参照式评估；多裁判共识</td>
+        <td>灵活；可扩展；能捕捉细微差别；能处理开放式任务；能处理自由格式输出</td>
+        <td>不确定；比代码贵；要和人工评分对齐校准，才谈得上准确</td>
+      </tr>
+      <tr>
+        <td>人工</td>
+        <td>领域专家评审；众包判断；抽样抽查；A/B 测试；标注者一致性</td>
+        <td>金标准质量；贴近专家用户的判断；用来校准模型评分器</td>
+        <td>贵；慢；通常需要能规模化触达的人类专家</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<p>每个任务的计分方式可以是加权的（多个评分器得分合起来要过阈值）、二元的（所有评分器都必须通过），或者混合的。</p>
+
+<h3>能力型评估与回归型评估</h3>
+
+<p><strong>能力型（质量型）评估</strong>问的是「这个 agent 能把什么做好」。它应该从很低的通过率开始，瞄准 agent 还做不好的任务，给团队一座要爬的山。</p>
+
+<p><strong>回归型评估</strong>问的是「它原来会做的那些事，现在还做得好吗」，通过率应该接近 100%。它防止倒退：分数掉了，就说明有东西坏了、需要修。团队在能力型评估上往上爬的时候，一定要同时跑回归型评估，确保改动没有在别处闯祸。</p>
+
+<p>agent 上线并调优之后，那些通过率已经很高的能力型评估可以「毕业」，变成持续运行的回归套件，用来发现漂移。曾经衡量「我们到底能不能做到」的任务，这时衡量的是「我们能不能稳定地做到」。</p>
+
+<h3>评估编码 agent</h3>
+
+<p><strong>编码 agent</strong>写代码、跑测试、调 bug，像人类开发者一样在代码库里穿行、执行命令。对现代编码 agent 有效的评估，通常依赖任务描述清晰、测试环境稳定、对生成代码的测试足够全面。</p>
+
+<p>确定性评分器天然适合编码 agent，因为软件好不好评是很直白的：代码跑不跑得起来、测试过不过。两个被广泛使用的基准就走的这条路：SWE-bench Verified 把热门 Python 仓库的 GitHub issue 交给 agent，用跑测试套件的方式打分——修好失败的测试、同时不弄坏已有测试，才算通过。一年之内，LLM 在这个评估上的成绩从 40% 涨到了 80% 以上。Terminal-Bench 走另一条线：测端到端的技术任务，比如从源码编译 Linux 内核、训练一个 ML 模型。</p>
+
+<p>当你手上有一组能判断编码任务关键<em>结果</em>的通过/失败测试之后，通常还值得把轨迹也评一遍。比如基于启发式规则的代码质量检查，可以依据「测试通过」之外的东西来评价生成的代码；带清晰评分量表的模型评分器，可以评 agent 怎么调工具、怎么和用户互动。</p>
+
+<p><strong>示例：一个编码 agent 的理论评估</strong></p>
+
+<p>设想一个任务：agent 要修掉一个认证绕过漏洞。下面这份示意性的 YAML 展示了如何用多个评分器和指标来评估它。</p>
+
+<pre><span class="tag">yaml</span><code>task:
+  id: "fix-auth-bypass_1"
+  desc: "Fix authentication bypass when password field is empty and ..."
+  graders:
+    - type: deterministic_tests
+      required: [test_empty_pw_rejected.py, test_null_pw_rejected.py]
+    - type: llm_rubric
+      rubric: prompts/code_quality.md
+    - type: static_analysis
+      commands: [ruff, mypy, bandit]
+    - type: state_check
+      expect:
+        security_logs: {event_type: "auth_blocked"}
+    - type: tool_calls
+      required:
+        - {tool: read_file, params: {path: "src/auth/*"}}
+        - {tool: edit_file}
+        - {tool: run_tests}
+  tracked_metrics:
+    - type: transcript
+      metrics:
+        - n_turns
+        - n_toolcalls
+        - n_total_tokens
+    - type: latency
+      metrics:
+        - time_to_first_token
+        - output_tokens_per_sec
+        - time_to_last_token</code></pre>
+
+<p>注意，这个例子把可用的评分器铺满，是为了演示。实践中，编码评估通常靠单元测试验正确性、靠一个 LLM 评分量表评整体代码质量，其余评分器和指标按需再加。</p>
+
+<h3>评估对话 agent</h3>
+
+<p><strong>对话 agent</strong>在客服、销售、教练这类领域与用户交流。和传统聊天机器人不同，它们维护状态、调用工具、在对话中途执行动作。编码和研究 agent 同样会与用户多轮交互，但对话 agent 有个独特的挑战：<em>交互本身的质量</em>就是你要评的东西之一。有效的评估通常依赖可验证的终态结果，加上能同时反映任务完成度和交互质量的评分量表。和大多数评估不同，它们往往需要第二个 LLM 来扮演用户。</p>
+
+<p>对对话 agent 来说，成功可以是多维的：工单解决了吗（状态检查）？十轮之内完成了吗（轨迹约束）？语气合适吗（LLM 评分量表）？𝜏-Bench 和它的后继者 τ2-Bench 就体现了这种多维性：它们在零售客服、机票预订等领域模拟多轮交互，一个模型扮演用户人设，另一个 agent 在贴近真实的场景里应对。</p>
+
+<p><strong>示例：一个对话 agent 的理论评估</strong></p>
+
+<p>设想一个客服任务：agent 要处理一位不满意客户的退款。</p>
+
+<pre><span class="tag">yaml</span><code>graders:
+  - type: llm_rubric
+    rubric: prompts/support_quality.md
+    assertions:
+      - "Agent showed empathy for customer's frustration"
+      - "Resolution was clearly explained"
+      - "Agent's response grounded in fetch_policy tool results"
+  - type: state_check
+    expect:
+      tickets: {status: resolved}
+      refunds: {status: processed}
+  - type: tool_calls
+    required:
+      - {tool: verify_identity}
+      - {tool: process_refund, params: {amount: "&lt;=100"}}
+      - {tool: send_confirmation}
+  - type: transcript
+    max_turns: 10
+tracked_metrics:
+  - type: transcript
+    metrics:
+      - n_turns
+      - n_toolcalls
+      - n_total_tokens
+  - type: latency
+    metrics:
+      - time_to_first_token
+      - output_tokens_per_sec
+      - time_to_last_token</code></pre>
+
+<p>同样，这个任务铺开多种评分器是为了演示。实践中，对话 agent 评估通常用基于模型的评分器同时评沟通质量和目标达成度，因为很多任务——比如回答一个问题——本来就可能有多个「正确」答案。</p>
+
+<h3>评估研究 agent</h3>
+
+<p><strong>研究 agent</strong>收集、综合、分析信息，产出答案或报告。编码 agent 有单元测试给出二元信号，研究质量却只能相对任务来判。什么算「全面」「来源可靠」，甚至「正确」，都取决于场景：市场扫描、并购尽调、科研报告，标准各不相同。</p>
+
+<p>研究评估有它特有的难点：专家之间对「综合得够不够全」可能就有分歧；随着参考内容变化，真值本身也在漂移；输出越长越开放，出错的空间也越大。像 BrowseComp 这样的基准，测的是 AI agent 能不能在开放网络里大海捞针——题目被设计成容易验证、极难解出。</p>
+
+<p>一个可行的思路是组合多种评分器：<em>有据可依</em>检查论断是否有检索到的来源支撑；<em>覆盖度</em>检查一个好的答案必须包含哪些关键事实；<em>来源质量</em>检查引用的来源是否权威，而不是「第一个检索到的」。对客观题（「X 公司 Q3 营收多少」），精确匹配就够。LLM 可以标出没有支撑的论断和覆盖缺口，也能评估开放式综述的连贯性和完整性。</p>
+
+<p>鉴于研究质量的主观性，基于 LLM 的评分量表应该经常用人类专家的判断来校准，才谈得上有效。</p>
+
+<h3>计算机操作 agent</h3>
+
+<p><strong>计算机操作 agent</strong>通过和人类相同的界面与软件交互——截图、点击、键盘输入、滚动——而不是走 API 或执行代码。它们能用任何带图形界面的应用，从设计工具到老式企业软件。评估要求在真实或沙箱环境里把 agent 跑起来，让它操作软件，然后检查是否达成了预期结果。WebArena 就用 URL 和页面状态检查来验证 agent 是否走对了路径，对会改数据的任务再加一层后端状态验证（确认订单真的下了，而不只是出现了确认页）。OSWorld 把范围扩到整个操作系统：任务完成后用脚本检查各种产物——文件系统状态、应用配置、数据库内容、UI 元素属性。</p>
+
+<p>浏览器 agent 要在 token 效率和延迟之间取舍。基于 DOM 的交互执行快，但很吃 token；基于截图的交互慢，但更省 token。比如让 Claude 总结维基百科，从 DOM 里提文本更高效；而在 Amazon 上找一个笔记本内胆包，截图更高效（把整个 DOM 提取出来太贵）。在 Claude for Chrome 里，我们建了评估来检查 agent 是否为每个场景选了合适的工具，这让浏览器任务跑得更快也更准。</p>
+
+<h3>怎么看待评估里的非确定性</h3>
+
+<p>无论哪类 agent，行为每次运行都不一样，这让结果比表面上更难解读。每个任务有自己的成功率——这个任务 90%，那个 50%——这次通过的任务下次可能就挂了。有时候我们真正想量的是：agent 在一个任务上成功的<em>比例</em>。</p>
+
+<p>两个指标能刻画这件事：</p>
+
+<p><strong>pass@k</strong> 衡量 agent 在 <em>k</em> 次尝试里至少蒙对一次的概率。k 越大，pass@k 越高：射门次数多，至少进一个的机会就大。pass@1 为 50%，意思是模型第一次尝试就解出了一半任务。编码场景里我们通常最关心第一次就解出来——pass@1。另一些场景里，只要有一个方案能用，提很多方案也没问题。</p>
+
+<p><strong>pass^k</strong> 衡量 <em>k</em> 次试验全部成功的概率。k 越大，pass^k 越低，因为要求更多次都保持一致是更难的门槛。假设单次成功率 75%，跑 3 次全过的概率是 0.75³ ≈ 42%。对面客的 agent，这个指标尤其重要——用户期待每次都是可靠的。</p>
+
+<figure class="art">
+  <div class="fig-head">
+    <div class="fig-title">pass@k 与 pass^k 的分岔</div>
+  </div>
+  <div class="fig-draw">
+    <svg class="fig-svg" viewBox="0 0 651 262" width="651" height="262" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+  <!-- 网格与坐标轴 -->
+  <path d="M60 30 L60 210 M60 210 L630 210" fill="none" stroke-width="1" style="stroke:var(--line-strong)"/>
+  <path d="M60 120 L630 120" fill="none" stroke-width="1" stroke-dasharray="3 4" style="stroke:var(--line-soft)"/>
+  <path d="M60 30 L630 30" fill="none" stroke-width="1" stroke-dasharray="3 4" style="stroke:var(--line-soft)"/>
+
+  <text x="52" y="214" font-size="10" text-anchor="end" fill="var(--ink-3)">0%</text>
+  <text x="52" y="124" font-size="10" text-anchor="end" fill="var(--ink-3)">50%</text>
+  <text x="52" y="34" font-size="10" text-anchor="end" fill="var(--ink-3)">100%</text>
+
+  <text x="70" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">1</text>
+  <text x="131" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">2</text>
+  <text x="192" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">3</text>
+  <text x="253" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">4</text>
+  <text x="314" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">5</text>
+  <text x="376" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">6</text>
+  <text x="437" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">7</text>
+  <text x="498" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">8</text>
+  <text x="559" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">9</text>
+  <text x="620" y="226" font-size="10" text-anchor="middle" fill="var(--ink-3)">10</text>
+  <text x="600" y="244" font-size="10" text-anchor="end" fill="var(--ink-3)">试验次数 k</text>
+
+  <!-- 曲线 -->
+  <polyline points="70,75 131,41.2 192,32.8 253,30.7 314,30.2 376,30 437,30 498,30 559,30 620,30"
+            fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--fig-focal)"/>
+  <polyline points="70,75 131,108.8 192,134.1 253,153 314,167.3 376,178 437,186 498,192 559,196.5 620,199.9"
+            fill="none" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" stroke-linecap="round"
+            style="stroke:var(--ink-3)"/>
+
+
+  <!-- 图例 -->
+  <line x1="70" y1="14" x2="92" y2="14" stroke-width="2" style="stroke:var(--fig-focal)"/>
+  <text x="98" y="18" font-size="10.5" fill="var(--ink-2)">pass@k：至少一次成功</text>
+  <line x1="252" y1="14" x2="274" y2="14" stroke-width="2" stroke-dasharray="5 4" style="stroke:var(--ink-3)"/>
+  <text x="280" y="18" font-size="10.5" fill="var(--ink-2)">pass^k：k 次全部成功（单次 75%）</text>
+
+  <circle cx="70" cy="75" r="2.5" style="fill:var(--fig-focal)"/>
+  <circle cx="314" cy="167.3" r="2.5" style="fill:var(--ink-3)"/>
+</svg>
+  </div>
+  <figcaption><b>图</b>k 变大时两个指标分道扬镳：pass@k 趋近 100%，pass^k 趋近 0%（单次成功率 75% 的情形）。</figcaption>
+</figure>
+
+<p>两个指标都有用，用哪个取决于产品要求：一次成功就够用的工具看 pass@k，一致性至关重要的 agent 看 pass^k。</p>
+
+<h2 id="roadmap">从 0 到 1：做出好评估的路线图</h2>
+
+<p>这一节是我们从「没有评估」走到「评估可信」的实践经验。可以把它当成评估驱动开发的路线图：早点定义成功，把它量清楚，然后持续迭代。</p>
+
+<h3>为第一批评测收集任务</h3>
+
+<p><strong>第 0 步：尽早开始。</strong>我们看到很多团队迟迟不建评估，因为他们觉得需要几百个任务。实际上，从真实失败里挑 20 到 50 个简单任务就是很好的开始。毕竟在 agent 开发早期，系统每一次改动往往效果都很明显，效应量大，样本小也够用。更成熟的 agent 才需要更大、更难的评估套件来检测更小的效应，但一开始最好走 80/20。评估这事拖得越久越难建：早期产品需求天然就能翻译成测试用例；拖久了，你就是在从一个已经跑起来的系统里反推成功标准。</p>
+
+<p><strong>第 1 步：从你已经在手工测的东西开始。</strong>先把你开发时手动的检查搬过来——每次发版前会验的行为、用户常试的任务。如果已经在生产环境，就翻 bug 跟踪器和客服队列。把用户报的失败变成测试用例，能保证套件反映真实使用；按影响面排序，能把力气花在刀刃上。</p>
+
+<p><strong>第 2 步：写无歧义的任务，并配参考解。</strong>任务质量比看上去难把握。一个好的任务，是两位领域专家独立判断会得出一致通过/失败结论的任务。他们自己能做出来吗？做不出来，任务就得改。任务描述里的歧义，最后都会变成指标里的噪声。给模型评分器写判据同理：含糊的评分量表只会产出前后矛盾的判断。</p>
+
+<p>每个任务都应该是「一个正确遵循指令的 agent 能通过」的。这一点很微妙。比如审计 Terminal-Bench 时发现：如果任务让 agent 写脚本但没指定路径，而测试假定了某个特定路径，agent 就可能因为不是自己的错而失败。评分器要检查的一切，都应该在任务描述里说清楚；agent 不该因为规格含糊而失败。对前沿模型来说，在大量试验上通过率为 0（也就是 pass@100 为 0），通常说明任务坏了，而不是 agent 不行——这时该回头检查任务描述和评分器。为每个任务准备一个参考解（一份能通过所有评分器的已知可用输出）很有用：它证明任务可解，也验证了评分器配置是否正确。</p>
+
+<p><strong>第 3 步：构建均衡的问题集。</strong>行为<em>该</em>出现的场景和<em>不该</em>出现的场景都要测。单边的评估只会带来单边的优化。比如你只测「该搜索时是否搜索」，最后可能得到一个什么都去搜的 agent。尽量避免类别不平衡的评估。这一点我们是在给 Claude.ai 做网页搜索评估时亲身体会的：难点在于既不让模型在不该搜的时候去搜，又保住它在合适时机做深入调研的能力。团队从两个方向都建了用例：该搜的查询（比如查天气），和该靠已有知识回答的查询（比如「苹果公司是谁创办的」）。在「该搜不搜」和「不该搜乱搜」之间找平衡很难，提示词和评估都迭代了很多轮。随着新例子出现，我们持续往里加用例来扩大覆盖。</p>
+
+<h3>设计评估脚手架与评分器</h3>
+
+<p><strong>第 4 步：搭一个稳健的评估脚手架和稳定的环境。</strong>评估里的 agent 必须和生产里的 agent 行为大致一致，环境本身也不能引入额外噪声。每次试验都应该从干净环境开始，做到「隔离」。运行之间不必要的共享状态（残留文件、缓存、资源耗尽）会让失败彼此相关——那是基础设施不稳，不是 agent 表现。共享状态也可能虚高成绩：在某些内部评估里，我们观察到 Claude 通过翻看前几次试验留下的 git 历史，在某些任务上获得了不公平的优势。如果多个不同的试验因为同一个环境限制（比如 CPU 内存不足）而失败，它们就不是独立的，评估结果也就不可信。</p>
+
+<p><strong>第 5 步：认真设计评分器。</strong>如前所述，好的评估设计就是为 agent 和任务挑对评分器。我们建议：能用确定性评分器就用；需要灵活性或做不到时用 LLM 评分器；人工评分器留作补充验证，用得克制。</p>
+
+<p>有一种常见的冲动：检查 agent 是否按非常具体的步骤走，比如按顺序调用一串工具。我们发现这种做法太僵硬，会造出很脆的测试——agent 经常能找到评估设计者没想到的合理路径。为了不无谓地惩罚创造力，更好的做法通常是评 agent 产出了什么，而不是它走了哪条路。</p>
+
+<p>对多组件的任务，要设置部分得分。一个正确识别了问题、验证了客户身份、但没能完成退款的客服 agent，明显好过一个一上来就失败的。把这种成功程度的连续谱反映到结果里很重要。</p>
+
+<p>模型评分往往需要仔细迭代才能保证准确。LLM 裁判要跟人类专家紧密校准，你才能确信人工打分和模型打分的分歧很小。为了避免幻觉，给 LLM 一条退路——比如指示它在信息不足时返回「Unknown」。给任务的每个维度写清晰、结构化的评分量表，然后用彼此独立的 LLM 裁判分别评每个维度，而不是让一个裁判评所有维度，也会更有帮助。系统稳健之后，偶尔用人工复核就足够了。</p>
+
+<p>有些评估存在隐蔽的失效模式：即使 agent 表现很好，分数依然很低——因为评分器的 bug、脚手架的约束或任务歧义让 agent 做不出来。再成熟的团队也可能漏掉这些。比如 Opus 4.5 在 CORE-Bench 上最初只有 42%，直到一位 Anthropic 研究员找出了多个问题：评分过于死板（期望「96.124991…」时把「96.12」判为错）、任务描述含糊、以及本来就不可能精确复现的随机性任务。修掉这些 bug、换用限制更少的脚手架之后，分数跳到了 95%。类似地，METR 在他们的时间跨度基准里发现若干配置错误的题目：题目让 agent 优化到某个明确分数阈值，但评分要求超过这个阈值——结果像 Claude 这样照指令做的模型被扣分，而无视目标的模型反而得分更高。仔细复核任务和评分器，能避免这类问题。</p>
+
+<p>让评分器抗绕过、抗作弊。agent 不该能轻易「骗过」评估；任务和评分器应该设计成：通过真的意味着解决了问题，而不是钻了没预料到的空子。</p>
+
+<h3>长期维护与使用评估</h3>
+
+<p><strong>第 6 步：读轨迹。</strong>不读的话，你不会知道评分器到底好不好用。在 Anthropic，我们投入做了查看评估轨迹的工具，并会定期花时间读。任务失败时，轨迹能告诉你：是 agent 真做错了，还是评分器拒绝了一个合理方案。它往往还会暴露出关于 agent 和评估行为的关键细节。</p>
+
+<p>失败应该是「讲得通」的：agent 错在哪、为什么错，都很清楚。分数上不去时，我们需要确信那是 agent 表现的问题，而不是评估的问题。读轨迹是验证「评估测的东西是否真的重要」的方式，也是开发 agent 的一项关键技能。</p>
+
+<p><strong>第 7 步：盯住能力型评估的饱和。</strong>一个 100% 通过的评估只能盯回归，提供不了改进信号。<em>评估饱和</em>指的是 agent 把所有可解任务都做对了，没留下改进空间。比如 SWE-Bench Verified 今年年初还是 30%，现在前沿模型已经逼近饱和，超过 80%。接近饱和时进展也会变慢，因为只剩最难的题目——这会让结果产生误导：能力的大幅提升，在分数上只表现为小幅上涨。代码审查创业公司 Qodo 起初对 Opus 4.5 无感，因为他们的单次编码评估捕捉不到在更长、更复杂任务上的收益；后来他们做了一套新的 agent 评估框架，才看清进步。</p>
+
+<p>我们的原则是：在有人深入看过评估细节、读过一些轨迹之前，不把分数当作定论。如果评分不公平、任务有歧义、合理方案被扣分、或者脚手架限制住了模型，评估就该重做。</p>
+
+<p><strong>第 8 步：靠开放共建和长期维护让套件保持健康。</strong>评估套件是活的资产，需要持续投入和明确的责任人，才有用。</p>
+
+<p>在 Anthropic，我们试过多种维护方式。最有效的是：设立专门的评估团队负责核心基础设施，而领域专家和产品团队贡献大部分任务，并自己跑评估。</p>
+
+<p>对 AI 产品团队来说，拥有并迭代评估，应该像维护单元测试一样日常。团队可能在一个 AI 功能上浪费好几周：早期测试里「能用」，却没满足那些没被说出口的期待——而一套设计良好的评估本可以早早暴露它们。定义评估任务，也是检验「产品需求是否具体到可以开工」的最好方式之一。</p>
+
+<p>我们建议实践评估驱动开发：在 agent 还做不到之前，先用评估定义计划中的能力，然后迭代到做得好为止。内部很多功能今天只是「够用」，本质是在赌模型几个月后的能力；从低通过率起步的能力型评估让这件事变得可见。新模型一发布，跑一遍套件就能看出哪些赌注兑现了。</p>
+
+<p>最贴近产品需求和用户的人，最适合定义成功。以现在的模型能力，产品经理、客户成功、销售都可以用 Claude Code 以 PR 的形式贡献一条评估任务——让他们来，甚至更好地，主动创造条件让他们能来。</p>
+
+<figure class="art">
+  <div class="fig-head">
+    <div class="fig-title">从 0 到 1 的路线图</div>
+  </div>
+  <div class="fig-draw">
+    <svg class="fig-svg" viewBox="0 0 651 276" width="651" height="276" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+  <!-- 三列底板 -->
+  <rect x="2" y="8" width="206" height="248" rx="10" fill="var(--bg-raised)"/>
+  <rect x="214" y="8" width="210" height="248" rx="10" fill="var(--bg-raised)"/>
+  <rect x="430" y="8" width="219" height="248" rx="10" fill="var(--bg-raised)"/>
+
+  <text x="105" y="34" font-size="11" font-weight="600" text-anchor="middle" fill="var(--ink-3)">用例集开发</text>
+  <text x="319" y="34" font-size="11" font-weight="600" text-anchor="middle" fill="var(--ink-3)">脚手架</text>
+  <text x="539" y="34" font-size="11" font-weight="600" text-anchor="middle" fill="var(--ink-3)">长期维护</text>
+
+  <!-- 第 1 列 -->
+  <rect x="21" y="52" width="166" height="38" rx="7" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="33" y="76" font-size="11" fill="var(--ink)"><tspan font-weight="600" fill="var(--fig-focal)">0</tspan>　尽早开始</text>
+
+  <rect x="21" y="102" width="166" height="38" rx="7" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="33" y="126" font-size="11" fill="var(--ink)"><tspan font-weight="600" fill="var(--fig-focal)">1</tspan>　从手工测试开始</text>
+
+  <rect x="21" y="152" width="166" height="38" rx="7" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="33" y="176" font-size="11" fill="var(--ink)"><tspan font-weight="600" fill="var(--fig-focal)">2</tspan>　任务写得无歧义</text>
+
+  <rect x="21" y="202" width="166" height="38" rx="7" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="33" y="226" font-size="11" fill="var(--ink)"><tspan font-weight="600" fill="var(--fig-focal)">3</tspan>　正例反例都覆盖</text>
+
+  <path d="M104 90 L104 98" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M100 94 L104 98 L108 94" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <path d="M104 140 L104 148" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M100 144 L104 148 L108 144" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <path d="M104 190 L104 198" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M100 194 L104 198 L108 194" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+
+  <!-- 第 2 列 -->
+  <rect x="236" y="52" width="166" height="38" rx="7" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="248" y="76" font-size="11" fill="var(--ink)"><tspan font-weight="600" fill="var(--fig-focal)">4</tspan>　搭稳健的脚手架</text>
+
+  <rect x="236" y="102" width="166" height="38" rx="7" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="248" y="126" font-size="11" fill="var(--ink)"><tspan font-weight="600" fill="var(--fig-focal)">5</tspan>　认真设计评分器</text>
+
+  <path d="M319 90 L319 98" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M315 94 L319 98 L323 94" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+
+  <!-- 第 3 列 -->
+  <rect x="452" y="52" width="166" height="38" rx="7" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="464" y="76" font-size="11" fill="var(--ink)"><tspan font-weight="600" fill="var(--fig-focal)">6</tspan>　读轨迹</text>
+
+  <rect x="452" y="102" width="166" height="38" rx="7" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="464" y="126" font-size="11" fill="var(--ink)"><tspan font-weight="600" fill="var(--fig-focal)">7</tspan>　盯住评估饱和</text>
+
+  <rect x="452" y="152" width="166" height="38" rx="7" fill="var(--bg-panel)" stroke="var(--line)"/>
+  <text x="464" y="176" font-size="11" fill="var(--ink)"><tspan font-weight="600" fill="var(--fig-focal)">8</tspan>　长期维护</text>
+
+  <path d="M535 90 L535 98" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M531 94 L535 98 L539 94" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <path d="M535 140 L535 148" fill="none" stroke-width="1" style="stroke:var(--ink-3)"/>
+  <path d="M531 144 L535 148 L539 144" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+
+  <!-- 跨列 -->
+  <path d="M187 221 L204 221 L204 71 L232 71" fill="none" stroke-width="1" stroke-linejoin="round" style="stroke:var(--ink-3)"/>
+  <path d="M228 67 L232 71 L228 75" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+  <path d="M402 121 L420 121 L420 71 L448 71" fill="none" stroke-width="1" stroke-linejoin="round" style="stroke:var(--ink-3)"/>
+  <path d="M444 67 L448 71 L444 75" fill="none" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--ink-3)"/>
+</svg>
+  </div>
+  <figcaption><b>图</b>九个步骤分成三段：用例集开发、搭脚手架、长期维护。</figcaption>
+</figure>
+
+<h2 id="holistic">评估与其他方法如何配合</h2>
+
+<p>自动化评估可以在不上生产、不影响真实用户的前提下，让 agent 跑上千个任务。但这只是理解 agent 表现的众多方式之一。完整的图景还包括生产监控、用户反馈、A/B 测试、人工读轨迹和系统化的人工研究。</p>
+
+<div class="table-wrap table-wrap--wide">
+  <table>
+    <thead>
+      <tr><th>方法</th><th>优点</th><th>局限</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>自动化评估</strong><br><span class="dim">不用真实用户，用程序跑测试</span></td>
+        <td>迭代快；完全可复现；不影响用户；每次提交都能跑；不用发版就能测大量场景</td>
+        <td>前期投入大；产品和模型演进时要持续维护，否则会漂移；如果与真实用法脱节，会造成虚假的信心</td>
+      </tr>
+      <tr>
+        <td><strong>生产监控</strong><br><span class="dim">跟踪线上指标与错误</span></td>
+        <td>能反映大规模下的真实用户行为；抓到合成评估漏掉的问题；给出 agent 真实表现的基准事实</td>
+        <td>被动：问题先到用户那里你才知道；信号噪声大；要做埋点投入；缺少用于评分的真值</td>
+      </tr>
+      <tr>
+        <td><strong>A/B 测试</strong><br><span class="dim">用真实流量比较变体</span></td>
+        <td>衡量真实用户结果（留存、任务完成）；能控制混淆因素；可扩展、系统化</td>
+        <td>慢，要几天到几周才能显著，且需要足够流量；只能测你发布的改动；不深读轨迹的话，很难知道指标变化的「为什么」</td>
+      </tr>
+      <tr>
+        <td><strong>用户反馈</strong><br><span class="dim">点踩、bug 报告这类显式信号</span></td>
+        <td>能暴露你没想到的问题；自带真实用户的例子；往往和产品目标相关</td>
+        <td>稀疏且自选择；偏向严重问题；用户很少解释<em>为什么</em>失败；不自动；主要靠用户发现问题，会对用户造成负面影响</td>
+      </tr>
+      <tr>
+        <td><strong>人工读轨迹</strong><br><span class="dim">人去看 agent 的对话</span></td>
+        <td>培养对失败模式的直觉；能抓到自动检查漏掉的细微质量问题；帮助校准「好」长什么样、把握细节</td>
+        <td>耗时；不可扩展；覆盖不一致；审阅者疲劳或不同审阅者会影响信号质量；通常只给质性的信号，没有清晰量化</td>
+      </tr>
+      <tr>
+        <td><strong>系统化人工研究</strong><br><span class="dim">受训评分者对输出做结构化打分</span></td>
+        <td>多位人类评分者给出的金标准判断；能处理主观或含糊的任务；为改进模型评分器提供信号</td>
+        <td>相对贵、周期长；难以高频进行；评分者之间分歧需要调和；法律、金融、医疗这类复杂领域需要人类专家来主持</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<p>这些方法对应 agent 开发的不同阶段。自动化评估在发布前和 CI/CD 里最有用，每次 agent 改动和模型升级都跑一遍，是质量问题第一道防线。生产监控在上线后接管，用来发现分布漂移和意料之外的真实世界失败。A/B 测试在你有了足够流量之后，验证重大改动。用户反馈和读轨迹是日常工夫，用来填空：持续分类反馈，每周抽样读轨迹，需要时再深挖。系统化的人工研究留给两件事：校准 LLM 评分器，以及评估那些以人类共识为参照的主观输出。</p>
+
+<figure class="art">
+  <div class="fig-head">
+    <div class="fig-title">质量的瑞士奶酪</div>
+  </div>
+  <div class="fig-draw">
+    <svg class="fig-svg" viewBox="0 0 651 300" width="651" height="300" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+  <!-- 三层，彼此错开 -->
+  <rect x="40" y="26" width="230" height="154" rx="10" fill="var(--fig-focal)" fill-opacity=".14" stroke="var(--fig-focal)" stroke-opacity=".4"/>
+  <rect x="120" y="76" width="230" height="154" rx="10" fill="var(--fig-focal)" fill-opacity=".08" stroke="var(--fig-focal)" stroke-opacity=".28"/>
+  <rect x="200" y="126" width="230" height="154" rx="10" fill="var(--bg-panel)" stroke="var(--line)"/>
+
+  <!-- 孔洞：贴在箭头路径上的三个，是「穿过去」的缺口 -->
+  <g fill="var(--bg)" stroke="var(--ink-3)" stroke-width="1">
+    <circle cx="80" cy="82" r="15"/>
+    <circle cx="200" cy="138" r="15"/>
+    <circle cx="330" cy="198" r="15"/>
+    <circle cx="150" cy="52" r="11"/>
+    <circle cx="250" cy="100" r="12"/>
+    <circle cx="90" cy="150" r="12"/>
+    <circle cx="180" cy="192" r="11"/>
+    <circle cx="400" cy="170" r="11"/>
+    <circle cx="280" cy="245" r="12"/>
+    <circle cx="380" cy="252" r="10"/>
+  </g>
+
+  <!-- 一个漏过去的失败 -->
+  <path d="M10 50 L420 240" fill="none" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--fig-focal)"/>
+  <path d="M407 239.5 L420 240 L411.2 230.5" fill="none" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" style="stroke:var(--fig-focal)"/>
+
+  <!-- 层名 -->
+  <text x="170" y="44" font-size="10.5" font-weight="600" fill="var(--ink-2)">自动评估</text>
+  <text x="270" y="94" font-size="10.5" font-weight="600" fill="var(--ink-2)">人工读轨迹</text>
+  <text x="216" y="272" font-size="10.5" font-weight="600" fill="var(--ink-2)">生产监控 / A/B / 用户反馈</text>
+
+  <!-- 右侧说明 -->
+  <g>
+    <circle cx="452" cy="52" r="4" fill="none" stroke="var(--fig-focal)"/>
+    <text x="466" y="48" font-size="10.5" font-weight="600" fill="var(--ink)">自动评估</text>
+    <text x="466" y="64" font-size="10" fill="var(--ink-3)">一致的度量，建立基线，</text>
+    <text x="466" y="78" font-size="10" fill="var(--ink-3)">上线前抓住回归</text>
+
+    <circle cx="452" cy="128" r="4" fill="none" stroke="var(--ink-3)"/>
+    <text x="466" y="124" font-size="10.5" font-weight="600" fill="var(--ink)">人工读轨迹</text>
+    <text x="466" y="140" font-size="10" fill="var(--ink-3)">抓住细微失败，以及</text>
+    <text x="466" y="154" font-size="10" fill="var(--ink-3)">意外的用户或 agent 行为</text>
+
+    <circle cx="452" cy="204" r="4" fill="none" stroke="var(--ink-3)"/>
+    <text x="466" y="200" font-size="10.5" font-weight="600" fill="var(--ink)">生产监控 / A/B / 反馈</text>
+    <text x="466" y="216" font-size="10" fill="var(--ink-3)">在大规模下暴露稀有边界</text>
+    <text x="466" y="230" font-size="10" fill="var(--ink-3)">与真实用量</text>
+  </g>
+</svg>
+  </div>
+  <figcaption><b>图</b>没有哪一层能拦下所有问题；多层叠加，从这一层漏掉的会被另一层接住。</figcaption>
+</figure>
+
+<p>最有效的团队会把这些方法组合起来：自动化评估负责快速迭代，生产监控提供真值，定期人工复核做校准。</p>
+
+<h2 id="conclusion">结语</h2>
+
+<p>没有评估的团队会陷在反应式循环里：修掉一个失败，又造出另一个，还分不清真正的回归和噪声。早早投入的团队恰恰相反：失败变成用例，用例挡住回归，指标取代猜测，开发反而更快。评估给整个团队一座看得见的山，把「感觉变差了」变成可执行的东西。它的价值会复利——但前提是你把评估当成核心部件，而不是事后补丁。</p>
+
+<p>具体做法随 agent 类型不同而变，但底层原则不变：尽早开始，别等一套完美的套件；从你看到的失败里收集真实任务；写出无歧义、稳健的成功标准；认真设计评分器并组合多种类型；确保题目对模型来说足够难；持续迭代评估以提升信噪比；然后，读轨迹。</p>
+
+<p>AI agent 评估仍是一个年轻、快速演进的领域。随着 agent 承担更长的任务、在多 agent 系统里协作、处理越来越主观的工作，方法也得跟着变。学到新东西，我们会继续分享。</p>
+
+<h2 id="frameworks">附录：评估框架</h2>
+
+<p>一些开源和商业框架能帮团队不必从零搭基础设施。怎么选取决于 agent 类型、现有技术栈，以及你需要离线评估、生产可观测，还是两者都要。</p>
+
+<ul>
+  <li><strong>Harbor</strong>：为在容器化环境里跑 agent 而设计，提供跨云厂商大规模跑试验的基础设施，以及定义任务和评分器的标准格式。Terminal-Bench 2.0 这类热门基准通过 Harbor registry 分发，跑现成基准和自定义套件都很方便。</li>
+  <li><strong>Braintrust</strong>：把离线评估、生产可观测和实验跟踪合在一起的平台，适合既要开发期迭代又要盯线上质量的团队。它的 <code>autoevals</code> 库内置了事实性、相关性等常用打分器。</li>
+  <li><strong>LangSmith</strong>：提供追踪、离线与在线评估、数据集管理，和 LangChain 生态结合紧密。<strong>Langfuse</strong> 以自托管开源方案提供类似能力，适合有数据驻留要求的团队。</li>
+  <li><strong>Arize</strong>：提供 Phoenix——一个开源的 LLM 追踪、调试与离线/在线评估平台，以及 AX，一个把 Phoenix 扩展到规模化、优化和监控的 SaaS 产品。</li>
+</ul>
+
+<p>很多团队会混用多个工具、自研评估框架，或者就从简单脚本起步。我们的体会是：框架能加速、能统一，但它的价值取决于你喂进去的任务。更划算的做法通常是先快速选一个贴合工作流的框架，然后把精力花在评估本身——持续打磨高质量用例和评分器。</p>
+
+<p class="thanks">作者：Mikaela Grace、Jeremy Hadfield、Rodrigo Olivares、Jiri De Jonghe。感谢 David Hershey、Gian Segato、Mike Merrill、Alex Shaw、Nicholas Carlini、Ethan Dixon、Pedram Navid、Jake Eaton、Alyssa Baum、Lina Tawfik、Karen Zhou、Alexander Bricken、Sam Kennedy、Robert Ying 等人的贡献。特别感谢在评估合作中让我们学到很多的客户与伙伴。</p>
